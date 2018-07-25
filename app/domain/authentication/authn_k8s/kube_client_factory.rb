@@ -16,6 +16,7 @@ module Authentication
       def self.client(api: 'api', version: 'v1')
         validate_serviceaccount_dir_exists!
         validate_env_variables!
+        full_url = "#{host_url}/#{api}"
         Kubeclient::Client.new(full_url, version, options)
       end
 
@@ -28,10 +29,6 @@ module Authentication
 
       def self.validate_env_variables!
         EXPECTED_ENV_VARS.each { |v| raise MissingEnvVar(v) unless ENV[v] }
-      end
-
-      def self.full_url
-        "#{host_url}/#{api}"
       end
 
       def self.host_url
