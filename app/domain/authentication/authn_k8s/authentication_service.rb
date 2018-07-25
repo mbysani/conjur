@@ -20,19 +20,20 @@ module Authentication
       def initialize_ca
         subject = "/CN=#{id.gsub('/', '.')}/OU=Conjur Kubernetes CA/O=#{conjur_account}"
         cert, key = CA.generate subject
-        populate_ca_variables cert, key
+        populate_ca_variables(cert, key)
       end
 
+      # TODO: this dep should be injected
       def conjur_account
         Conjur.configuration.account
       end
 
       def ca_cert_variable
-        Resource["#{conjur_account}:variable:#{id}/ca/cert"]
+        Resource["#{service_id}/ca/cert"]
       end
 
       def ca_key_variable
-        Resource["#{conjur_account}:variable:#{id}/ca/key"]
+        Resource["#{service_id}/ca/key"]
       end
 
       # Initialize CA from Conjur variables
@@ -42,13 +43,13 @@ module Authentication
         CA.new(ca_cert, ca_key)
       end
 
-      protected
-      
-      # Gets an access token for the policy role.
-      def policy_token
-        @policy_token ||= Conjur::API.authenticate_local "policy/#{id}"
-      end
+      private
 
+      # TODO: extract into reusable object
+      def service_id 
+        "#{conjur_account}:variable:#{id}"
+      end
+      
       # Stores the CA cert and key in variables.
       def populate_ca_variables cert, key
         Secret.create(resource_id: ca_cert_variable.id, value: cert.to_pem)
