@@ -299,7 +299,7 @@ module Authentication
       end
 
       def find_pod
-        pod = K8sObjectLookup.find_pod_by_podname_in_namespace pod_name, k8s_namespace
+        pod = K8sObjectLookup.pod_by_name(pod_name, k8s_namespace)
         unless pod
           raise AuthenticationError, "No Pod found for podname #{pod_name} in namespace #{k8s_namespace.inspect}"
         end
@@ -314,10 +314,15 @@ module Authentication
         elsif permitted_scope?
           controller_object = K8sObjectLookup.find_object_by_name k8s_controller_name, k8s_object_name, k8s_namespace
           unless controller_object
-            raise AuthenticationError, "Kubernetes #{k8s_controller_name} #{k8s_object_name.inspect} not found in namespace #{k8s_namespace.inspect}"
+            err = "Kubernetes #{k8s_controller_name} "\
+              "#{k8s_object_name.inspect} not found in namespace "\
+              "#{k8s_namespace.inspect}"
+            raise AuthenticationError, err
           end
 
-          resolver = K8sResolver.for_controller(k8s_controller_name).new(controller_object, pod)
+          resolver = K8sResolver
+            .for_controller(k8s_controller_name)
+            .new(controller_object, pod)
           # May raise K8sResolver#ValidationError
           resolver.validate_pod
 
@@ -337,7 +342,7 @@ module Authentication
       end
 
       def find_pod_under_controller
-        pod = K8sObjectLookup.find_pod_by_request_ip_in_namespace request_ip, k8s_namespace
+        pod = K8sObjectLookup.pod_by_ip(request_ip, k8s_namespace)
         unless pod
           raise AuthenticationError, "No Pod found for request IP #{request_ip.inspect} in namespace #{k8s_namespace.inspect}"
         end
