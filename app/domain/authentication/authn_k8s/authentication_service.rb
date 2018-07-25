@@ -23,12 +23,7 @@ module Authentication
         cert, key = CA.generate subject
 
         if master_host
-          appliance_url = "https://#{master_host}/api"
-          configuration = Conjur.configuration.clone appliance_url: appliance_url
-          host = nil
-          Conjur.with_configuration configuration do
-            populate_ca_variables cert, key
-          end
+          populate_ca_variables cert, key
           wait_for_variable ca_cert_variable, cert
           wait_for_variable ca_key_variable, key
         else
