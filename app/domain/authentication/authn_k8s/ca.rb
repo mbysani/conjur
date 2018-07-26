@@ -2,7 +2,7 @@ require 'securerandom'
 require 'active_support/time'
 
 module DeclarativeX509Certificates
-  refine OpenSSL::X509::Certificate do
+  refine OpenSSL::X509::Certificate.singleton_class do
     def self.from_hash(
       subject:,
       issuer:,
