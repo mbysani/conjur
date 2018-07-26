@@ -28,8 +28,8 @@ module Authentication
         find_pod
         find_container
 
-        cert = @ca.issue pod_csr, [ "URI:#{spiffe_id}" ]
-        install_signed_cert cert
+        cert = @ca.issue(pod_csr, [ "URI:#{spiffe_id}" ])
+        install_signed_cert(cert)
       end
       
       def valid?(input)
@@ -134,9 +134,9 @@ module Authentication
       # authn-k8s LoginController helpers
       #----------------------------------------
       
-      def install_signed_cert cert
-        exec = KubectlExec.new @pod, container: k8s_container_name
-        response = exec.copy "/etc/conjur/ssl/client.pem", cert.to_pem, "0644"
+      def install_signed_cert(cert)
+        exec = KubectlExec.new(@pod, container: k8s_container_name)
+        response = exec.copy("/etc/conjur/ssl/client.pem", cert.to_pem, "0644")
         
         if response[:error].present?
           raise AuthenticationError, response[:error].join

@@ -21,7 +21,8 @@ module Authentication
           cert.not_before = Time.now
           cert.not_after = Time.now + 10 * 365 * 24 * 60 * 60
           cert.public_key = public_key
-          cert.serial = 0x0
+          # cert.serial = 0x0
+          cert.serial = SecureRandom.random_number 2**160 # 20 bytes
           cert.version = 2
 
           ef = OpenSSL::X509::ExtensionFactory.new
@@ -56,7 +57,7 @@ module Authentication
       # @return [OpenSSL::X509::Certificate]
       def issue(csr, subject_altnames)
         Certificate.new(@cacert, csr, subject_altnames).tap do |cert|
-          cert.sign @cakey, OpenSSL::Digest::SHA256.new
+          cert.sign(@cakey, OpenSSL::Digest::SHA256.new)
         end
       end
 
