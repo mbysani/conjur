@@ -1,46 +1,44 @@
 require 'securerandom'
 require 'active_support/time'
 
-module DeclarativeX509Certificates
-  refine OpenSSL::X509::Certificate.singleton_class do
-    def from_hash(
-      subject:,
-      issuer:,
-      public_key:,
-      good_for:, # accepts any object with to_i
-      version: 2,
-      serial: SecureRandom.random_number(2**160), # 20 bytes
-      issuer_cert: nil, # if nil, assumed to be self
-      extensions: [] # an array of arrays
-    )
-      now = Time.now
+module DeclarativeX509Certificate
+  def self.from_hash(
+    subject:,
+    issuer:,
+    public_key:,
+    good_for:, # accepts any object with to_i
+    version: 2,
+    serial: SecureRandom.random_number(2**160), # 20 bytes
+    issuer_cert: nil, # if nil, assumed to be self
+    extensions: [] # an array of arrays
+  )
+    now = Time.now
 
-      cert = OpenSSL::X509::Certificate.new
-      cert.subject = openssl_name(subject)
-      cert.issuer = openssl_name(issuer)
-      cert.not_before = now
-      cert.not_after = now + good_for.to_i
-      cert.public_key = public_key
-      cert.serial = SecureRandom.random_number 2**160 # 20 bytes
-      cert.version = 2
+    cert = OpenSSL::X509::Certificate.new
+    cert.subject = openssl_name(subject)
+    cert.issuer = openssl_name(issuer)
+    cert.not_before = now
+    cert.not_after = now + good_for.to_i
+    cert.public_key = public_key
+    cert.serial = SecureRandom.random_number 2**160 # 20 bytes
+    cert.version = 2
 
-      ef = OpenSSL::X509::ExtensionFactory.new
-      ef.subject_certificate = cert
-      ef.issuer_certificate = issuer_cert || cert
+    ef = OpenSSL::X509::ExtensionFactory.new
+    ef.subject_certificate = cert
+    ef.issuer_certificate = issuer_cert || cert
 
-      extensions.each do |args|
-        cert.add_extension(ef.create_extension(*args))
-      end
-
-      cert
+    extensions.each do |args|
+      cert.add_extension(ef.create_extension(*args))
     end
 
-    private
+    cert
+  end
 
-    def openssl_name(name)
-      is_obj = name.is_a?(OpenSSL::X509::Name)
-      is_obj ? name : OpenSSL::X509::Name.parse(name)
-    end
+  private
+
+  def self.openssl_name(name)
+    is_obj = name.is_a?(OpenSSL::X509::Name)
+    is_obj ? name : OpenSSL::X509::Name.parse(name)
   end
 end
 
@@ -51,7 +49,6 @@ module Authentication
 
 
     class CA
-      using DeclarativeX509Certificates
 
       class << self
         def generate_key
@@ -63,7 +60,7 @@ module Authentication
           key = generate_key
           public_key = key.public_key
 
-          cert = OpenSSL::X509::Certificate.from_hash(
+          cert = DeclarativeX509Certificate.from_hash(
             subject: subject,
             issuer: subject,
             public_key: public_key,

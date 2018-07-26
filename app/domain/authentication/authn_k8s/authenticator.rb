@@ -20,8 +20,10 @@ module Authentication
 
         @service_id = params[:service_id]
 
+        # make sure enabled in CONJUR_AUTHENTICATORS
+        # should use the security module
         verify_enabled
-        service_lookup
+        service_lookup # queries for webservice resource, caches, raises err if not found
         host_lookup
         authorize_host
         load_ca
