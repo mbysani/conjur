@@ -1,3 +1,4 @@
+require 'openssl'
 require 'securerandom'
 require 'active_support/time'
 
@@ -46,8 +47,6 @@ end
 # Conjur machines (eg. followers, standbys, etc.).
 module Authentication
   module AuthnK8s
-
-
     class CA
 
       class << self
@@ -72,7 +71,7 @@ module Authentication
             ]
           )
 
-          cert.sign(key, OpenSSL::Digest::SHA256.new)
+          cert.sign(key, OpenSSL::Digest::SHA1.new)
           [ cert, key ]
         end
       end
@@ -144,3 +143,7 @@ module Authentication
     end
   end
 end
+
+puts Authentication::AuthnK8s::CA.generate(
+  "/CN=example.com/OU=Conjur Kubernetes CA/O=example"
+).first.to_text
