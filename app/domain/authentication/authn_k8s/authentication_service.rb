@@ -18,9 +18,8 @@ module Authentication
 
       # Generates a CA certificate and key and store them in Conjur variables.  
       def initialize_ca
-        subject = "/CN=#{id.gsub('/', '.')}/OU=Conjur Kubernetes CA/O=#{conjur_account}"
-        cert, key = CA.generate subject
-        populate_ca_variables(cert, key)
+        cert, key = CA.generate(cert_subject)
+        save_in_conjur(cert, key)
       end
 
       # TODO: this dep should be injected
@@ -45,13 +44,21 @@ module Authentication
 
       private
 
+      def cert_subject
+        "/CN=#{common_name}/OU=Conjur Kubernetes CA/O=#{conjur_account}"
+      end
+
+      def common_name
+        id.gsub('/', '.')
+      end
+
       # TODO: extract into reusable object
       def service_id 
         "#{conjur_account}:variable:#{id}"
       end
       
       # Stores the CA cert and key in variables.
-      def populate_ca_variables cert, key
+      def save_in_conjur(cert, key)
         Secret.create(resource_id: ca_cert_variable.id, value: cert.to_pem)
         Secret.create(resource_id: ca_key_variable.id, value: key.to_pem)
       end
