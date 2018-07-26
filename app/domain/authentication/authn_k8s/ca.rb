@@ -3,7 +3,7 @@ require 'active_support/time'
 
 module DeclarativeX509Certificates
   refine OpenSSL::X509::Certificate.singleton_class do
-    def self.from_hash(
+    def from_hash(
       subject:,
       issuer:,
       public_key:,
@@ -37,7 +37,7 @@ module DeclarativeX509Certificates
 
     private
 
-    def self.openssl_name(name)
+    def openssl_name(name)
       is_obj = name.is_a?(OpenSSL::X509::Name)
       is_obj ? name : OpenSSL::X509::Name.parse(name)
     end
