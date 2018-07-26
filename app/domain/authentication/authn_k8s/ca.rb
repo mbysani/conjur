@@ -21,7 +21,7 @@ module DeclarativeX509Certificate
     cert.not_before = now
     cert.not_after = now + good_for.to_i
     cert.public_key = public_key
-    cert.serial = SecureRandom.random_number 2**160 # 20 bytes
+    cert.serial = SecureRandom.random_number(2**160) # 20 bytes
     cert.version = 2
 
     ef = OpenSSL::X509::ExtensionFactory.new
@@ -71,7 +71,7 @@ module Authentication
             ]
           )
 
-          cert.sign(key, OpenSSL::Digest::SHA1.new)
+          cert.sign(key, OpenSSL::Digest::SHA256.new)
           [ cert, key ]
         end
       end
@@ -143,7 +143,3 @@ module Authentication
     end
   end
 end
-
-puts Authentication::AuthnK8s::CA.generate(
-  "/CN=example.com/OU=Conjur Kubernetes CA/O=example"
-).first.to_text
