@@ -1,42 +1,81 @@
 require 'securerandom'
+require 'active_support/time'
+
+module DeclarativeX509Certificates
+  refine OpenSSL::X509::Certificate do
+    def self.from_hash(
+      subject:,
+      issuer:,
+      public_key:,
+      good_for:, # accepts any object with to_i
+      version: 2,
+      serial: SecureRandom.random_number(2**160), # 20 bytes
+      issuer_cert: nil, # if nil, assumed to be self
+      extensions: [] # an array of arrays
+    )
+      now = Time.now
+
+      cert = OpenSSL::X509::Certificate.new
+      cert.subject = openssl_name(subject)
+      cert.issuer = openssl_name(issuer)
+      cert.not_before = now
+      cert.not_after = now + good_for.to_i
+      cert.public_key = public_key
+      cert.serial = SecureRandom.random_number 2**160 # 20 bytes
+      cert.version = 2
+
+      ef = OpenSSL::X509::ExtensionFactory.new
+      ef.subject_certificate = cert
+      ef.issuer_certificate = issuer_cert || cert
+
+      extensions.each do |args|
+        cert.add_extension(ef.create_extension(*args))
+      end
+
+      cert
+    end
+
+    private
+
+    def self.openssl_name(name)
+      is_obj = name.is_a?(OpenSSL::X509::Name)
+      is_obj ? name : OpenSSL::X509::Name.parse(name)
+    end
+  end
+end
 
 # Conjur certificate authority, for issuing X509 certificates of
 # Conjur machines (eg. followers, standbys, etc.).
 module Authentication
   module AuthnK8s
+
+
     class CA
+      using DeclarativeX509Certificates
+
       class << self
         def generate_key
           OpenSSL::PKey::RSA.new 2048
         end
 
         # Generate a CA key and certificate.
-        def generate subject
+        def generate(subject)
           key = generate_key
           public_key = key.public_key
 
-          # Reference: https://gist.github.com/nickyp/886884
-          cert = OpenSSL::X509::Certificate.new
-          cert.subject = cert.issuer = OpenSSL::X509::Name.parse(subject)
-          cert.not_before = Time.now
-          cert.not_after = Time.now + 10 * 365 * 24 * 60 * 60
-          cert.public_key = public_key
-          # cert.serial = 0x0
-          cert.serial = SecureRandom.random_number 2**160 # 20 bytes
-          cert.version = 2
+          cert = OpenSSL::X509::Certificate.from_hash(
+            subject: subject,
+            issuer: subject,
+            public_key: public_key,
+            good_for: 10.years,
+            extensions: [
+              ['basicConstraints','CA:TRUE', true],
+              ['subjectKeyIdentifier', 'hash'],
+              ['authorityKeyIdentifier', 'keyid:always,issuer:always']
+            ]
+          )
 
-          ef = OpenSSL::X509::ExtensionFactory.new
-          ef.subject_certificate = cert
-          ef.issuer_certificate = cert
-          cert.extensions = [
-            ef.create_extension("basicConstraints","CA:TRUE", true),
-            ef.create_extension("subjectKeyIdentifier", "hash"),
-          ]
-          cert.add_extension ef.create_extension("authorityKeyIdentifier", "keyid:always,issuer:always")
-
-          #TODO: why don't we use SHA256 here?
-          cert.sign(key, OpenSSL::Digest::SHA1.new)
-
+          cert.sign(key, OpenSSL::Digest::SHA256.new)
           [ cert, key ]
         end
       end
@@ -104,6 +143,7 @@ module Authentication
           add_extension ef.create_extension(*args)
         end
       end
+
     end
   end
 end
