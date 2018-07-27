@@ -382,7 +382,9 @@ module Authentication
       end
 
       def service_lookup
-        @service ||= Resource["#{@env['CONJUR_ACCOUNT']}:webservice:conjur/authn-k8s/#{service_id}"]
+        @service ||= Resource[
+          "#{@env['CONJUR_ACCOUNT']}:webservice:conjur/authn-k8s/#{service_id}"
+        ]
         raise NotFoundError, "Service #{service_id} not found" if @service.nil?
       end
 
