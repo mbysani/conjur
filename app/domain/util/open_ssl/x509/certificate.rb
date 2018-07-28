@@ -7,7 +7,6 @@ require 'openssl'
 module Util
   module OpenSsl
     module X509
-
       module Certificate
         def self.from_hash(
           subject:,
@@ -48,10 +47,6 @@ module Util
           is_obj ? name : OpenSSL::X509::Name.parse(name)
         end
       end
-
     end
-
   end
 end
-
-p ::Util::OpenSsl::X509::BetterClass.better_meth

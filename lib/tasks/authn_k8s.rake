@@ -5,7 +5,7 @@ namespace :authn_k8s do
   task :ca_init, [ "service-id" ] => :environment do |t, args|
     service = args["service-id"] or raise "usage: rake authn_k8s:ca_init[<service-id>]"
 
-    svc = Authentication::AuthnK8s::AuthenticationService.new(service)
+    svc = Authentication::AuthnK8s::ConjurCA.new(service)
     svc.initialize_ca
 
     puts "Populated CA and Key of service #{service.inspect}"

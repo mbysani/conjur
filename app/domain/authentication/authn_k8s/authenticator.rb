@@ -26,11 +26,12 @@ module Authentication
         service_lookup # queries for webservice resource, caches, raises err if not found
         host_lookup
         authorize_host
+        # ^^ all validation and objects, more ore less
         load_ca
         find_pod
         find_container
 
-        cert = @ca.issue(pod_csr, [ "URI:#{spiffe_id}" ])
+        cert = @ca.signed_cert(pod_csr, subject_altnames: [ "URI:#{spiffe_id}" ])
         install_signed_cert(cert)
       end
       
@@ -268,7 +269,7 @@ module Authentication
       end
 
       def load_ca
-        svc = AuthenticationService.new(@service.identifier)
+        svc = ConjurCA.new(@service.identifier)
         @ca ||= svc.load_ca
       end
 
@@ -383,6 +384,7 @@ module Authentication
 
       def service_lookup
         @service ||= Resource[
+          #TODO: fix
           "#{@env['CONJUR_ACCOUNT']}:webservice:conjur/authn-k8s/#{service_id}"
         ]
         raise NotFoundError, "Service #{service_id} not found" if @service.nil?
@@ -401,6 +403,7 @@ module Authentication
       end
 
       def host_id_prefix
+         #TODO: fix
         "#{@env['CONJUR_ACCOUNT']}:host:conjur/authn-k8s/#{service_id}/apps"
       end
 

@@ -7,24 +7,26 @@
 # * Is a naming prefix to the application hosts.
 module Authentication
   module AuthnK8s
-    class AuthenticationService
+    class ConjurCA
       attr_reader :id
 
       # Constructs AuthenticationService from the +id+, which is typically something like
       # conjur/authn-k8s/<cluster-name>.
-      def initialize id
+      def initialize(id)
         @id = id
       end
 
       # Generates a CA certificate and key and store them in Conjur variables.  
       def initialize_ca
-        cert, key = CA.generate(cert_subject)
+        cert, key = CA.cert_and_key(cert_subject)
         save_in_conjur(cert, key)
       end
 
-      # TODO: this dep should be injected
-      def conjur_account
-        Conjur.configuration.account
+      # Initialize CA from Conjur variables
+      def load_ca
+        ca_cert = OpenSSL::X509::Certificate.new(ca_cert_variable.last_secret.value)
+        ca_key = OpenSSL::PKey::RSA.new(ca_key_variable.last_secret.value)
+        CA.new(ca_cert, ca_key)
       end
 
       def ca_cert_variable
@@ -35,21 +37,20 @@ module Authentication
         Resource["#{service_id}/ca/key"]
       end
 
-      # Initialize CA from Conjur variables
-      def load_ca
-        ca_cert = OpenSSL::X509::Certificate.new(ca_cert_variable.last_secret.value)
-        ca_key = OpenSSL::PKey::RSA.new(ca_key_variable.last_secret.value)
-        CA.new(ca_cert, ca_key)
+      private
+
+      # TODO: this dep should be injected
+      def conjur_account
+        Conjur.configuration.account
       end
 
-      private
 
       def cert_subject
         "/CN=#{common_name}/OU=Conjur Kubernetes CA/O=#{conjur_account}"
       end
 
       def common_name
-        id.gsub('/', '.')
+        @id.gsub('/', '.')
       end
 
       # TODO: extract into reusable object
