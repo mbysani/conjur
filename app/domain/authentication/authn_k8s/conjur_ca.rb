@@ -1,67 +1,33 @@
-# AuthenticationService represents the authenticator itself, which 
-# has a Conjur id that:
-#
-# * Identifies a policy.
-# * Identifies a webservice.
-# * Is a naming prefix to CA cert and key variables.
-# * Is a naming prefix to the application hosts.
 module Authentication
   module AuthnK8s
     class ConjurCA
       attr_reader :id
 
-      # Constructs AuthenticationService from the +id+, which is typically something like
-      # conjur/authn-k8s/<cluster-name>.
+      # id like: conjur/authn-k8s/<cluster-name>.
+      # 
+      # TODO: refactor to a ConjurVariable
+      #
       def initialize(id)
         @id = id
       end
 
+      # TODO: move these to model classes?
       # Generates a CA certificate and key and store them in Conjur variables.  
-      def initialize_ca
-        cert, key = CA.cert_and_key(cert_subject)
-        save_in_conjur(cert, key)
+      def self.create_ca_for(resource)
+        cr = ::Conjur::CertificateResource.new(resource)
+        ca = CA.from_subject(cr.cert_subject)
+        Secret.create(resource_id: cr.cert_id, value: ca.cert.to_pem)
+        Secret.create(resource_id: cr.key_id, value: ca.key.to_pem)
       end
 
       # Initialize CA from Conjur variables
-      def load_ca
-        ca_cert = OpenSSL::X509::Certificate.new(ca_cert_variable.last_secret.value)
-        ca_key = OpenSSL::PKey::RSA.new(ca_key_variable.last_secret.value)
+      def self.conjur_ca(resource)
+        cr = ::Conjur::CertificateResource.new(resource)
+        stored_cert = Resource["#{cr.cert_id}"].last_secret.value
+        stored_key = Resource["#{cr.key_id}"].last_secret.value
+        ca_cert = OpenSSL::X509::Certificate.new(stored_cert)
+        ca_key = OpenSSL::PKey::RSA.new(stored_key)
         CA.new(ca_cert, ca_key)
-      end
-
-      def ca_cert_variable
-        Resource["#{service_id}/ca/cert"]
-      end
-
-      def ca_key_variable
-        Resource["#{service_id}/ca/key"]
-      end
-
-      private
-
-      # TODO: this dep should be injected
-      def conjur_account
-        Conjur.configuration.account
-      end
-
-
-      def cert_subject
-        "/CN=#{common_name}/OU=Conjur Kubernetes CA/O=#{conjur_account}"
-      end
-
-      def common_name
-        @id.gsub('/', '.')
-      end
-
-      # TODO: extract into reusable object
-      def service_id 
-        "#{conjur_account}:variable:#{id}"
-      end
-      
-      # Stores the CA cert and key in variables.
-      def save_in_conjur(cert, key)
-        Secret.create(resource_id: ca_cert_variable.id, value: cert.to_pem)
-        Secret.create(resource_id: ca_key_variable.id, value: key.to_pem)
       end
     end
   end

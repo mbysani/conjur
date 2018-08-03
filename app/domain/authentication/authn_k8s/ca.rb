@@ -6,12 +6,15 @@ require 'active_support/time'
 # machines (eg. followers, standbys, etc.).
 #
 module Authentication
+  #TODO: move this out of K8s
   module AuthnK8s
     class CA
 
+      attr_reader :cert, :key
+
       # Generate a CA key and certificate.
       #
-      def self.cert_and_key(subject)
+      def self.from_subject(subject)
         key = OpenSSL::PKey::RSA.new(2048)
 
         cert = Util::OpenSsl::X509::Certificate.from_hash(
@@ -27,33 +30,34 @@ module Authentication
         )
         cert.sign(key, OpenSSL::Digest::SHA256.new)
 
-        [ cert, key ]
+        self.new(cert, key)
       end
 
-      def initialize(ca_cert, ca_key)
-        raise "WTF"
-        @ca_cert = ca_cert
-        @ca_key = ca_key
+      def initialize(cert, key)
+        @cert = cert
+        @key = key
       end
 
       # Issue a new certificate signed by CA's key
       #
       # Returns an OpenSSL::X509::Certificate
       #
+      # TODO: signed_child_cert?
+      #
       def signed_cert(csr, subject_altnames: nil, good_for: 3.days)
         Util::OpenSsl::X509::Certificate.from_hash(
           subject: csr.subject,
-          issuer: @ca_cert.subject,
+          issuer: @cert.subject,
           public_key: csr.public_key,
           good_for: good_for,
           extensions: extensions(subject_altnames)
         ).tap do |cert|
-          cert.sign(@ca_key, OpenSSL::Digest::SHA256.new)
+          cert.sign(@key, OpenSSL::Digest::SHA256.new)
         end
       end
 
       def verify(cert)
-        cert.verify(@ca_key)
+        cert.verify(@key)
       end
 
       private

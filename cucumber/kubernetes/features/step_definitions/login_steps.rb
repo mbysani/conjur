@@ -41,7 +41,9 @@ def login username, request_ip, authn_k8s_host, pkey
 
   resp = RestClient::Resource.new(authn_k8s_host)["inject_client_cert?request_ip=#{request_ip}"].post(csr.to_pem, content_type: 'text/plain')
   
+  p 'resp', resp
   @cert = pod_certificate
+  p '@cert', @cert
 
   resp
 end

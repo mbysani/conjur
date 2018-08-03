@@ -1,5 +1,7 @@
 require 'kubeclient'
 
+#TODO make it class that accepts env, so the validation is only done once
+#
 module Authentication
   module AuthnK8s
     module KubeClientFactory
@@ -28,7 +30,7 @@ module Authentication
       end
 
       def self.validate_env_variables!
-        EXPECTED_ENV_VARS.each { |v| raise MissingEnvVar(v) unless ENV[v] }
+        EXPECTED_ENV_VARS.each { |v| raise MissingEnvVar, v unless ENV[v] }
       end
 
       def self.host_url

@@ -2,6 +2,8 @@
 # Kubernetes API.
 module Authentication
   module AuthnK8s
+    #TODO: rename to K8sApiFacade
+    #
     module K8sObjectLookup
       extend self
 

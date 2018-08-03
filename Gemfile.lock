@@ -122,6 +122,7 @@ GEM
       rack
     contracts (0.16.0)
     crass (1.0.3)
+    csr (0.1.0)
     cucumber (2.4.0)
       builder (>= 2.1.2)
       cucumber-core (~> 1.5.0)
@@ -416,6 +417,7 @@ DEPENDENCIES
   conjur-policy-parser (>= 3.0.2)!
   conjur-rack (~> 3.1)
   conjur-rack-heartbeat
+  csr
   cucumber
   database_cleaner
   dry-struct
