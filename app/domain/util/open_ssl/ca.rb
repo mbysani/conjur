@@ -1,13 +1,13 @@
+# Represents a Certificate Authority that can issue new signed certificates.
+# It can also be thought of as a representation of a certificate and its
+# associated key.
+#
 require 'openssl'
 require 'securerandom'
 require 'active_support/time'
 
-# Conjur certificate authority, for issuing X509 certificates for Conjur
-# machines (eg. followers, standbys, etc.).
-#
-module Authentication
-  #TODO: move this out of K8s
-  module AuthnK8s
+module Util
+  module OpenSsl
     class CA
 
       attr_reader :cert, :key
@@ -41,8 +41,6 @@ module Authentication
       # Issue a new certificate signed by CA's key
       #
       # Returns an OpenSSL::X509::Certificate
-      #
-      # TODO: signed_child_cert?
       #
       def signed_cert(csr, subject_altnames: nil, good_for: 3.days)
         Util::OpenSsl::X509::Certificate.from_hash(

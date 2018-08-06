@@ -335,13 +335,13 @@ module Authentication
       def verify_enabled
         conjur_authenticators = (@env['CONJUR_AUTHENTICATORS'] || '').split(',').map(&:strip)
         unless conjur_authenticators.include?("authn-k8s/#{service_id}")
-          raise NotFoundError, "authn-k8s/#{service_id} not whitelisted in CONJUR_AUTHENTICATORS"
+          raise NotFoundError,
+            "authn-k8s/#{service_id} not whitelisted in CONJUR_AUTHENTICATORS"
         end
       end
 
       def load_ca
-        svc = ConjurCA.new(@service.identifier)
-        @ca ||= svc.load_ca
+        @ca = Repos::ConjurCA.ca(@service.identifier)
       end
 
       def find_container

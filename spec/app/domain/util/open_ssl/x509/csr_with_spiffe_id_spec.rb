@@ -1,7 +1,7 @@
 require 'app/domain/util/open_ssl/x509/csr_with_spiffe_id'
 require 'app/domain/util/open_ssl/x509/quick_csr'
 
-RSpec.describe 'Util::OpenSsl::X509::CsrWithSpiffeId' do
+RSpec.describe 'Util::OpenSsl::X509::CsrWithSpiffeId#spiffe_id' do
 
   let(:spiffe_id) { 'URI:spiffe://cluster.local/example' }
 
@@ -22,12 +22,11 @@ RSpec.describe 'Util::OpenSsl::X509::CsrWithSpiffeId' do
 
   # Serializes and deserializes the CSR, then wraps it in CsrWithSpiffeId
   #
-  def deserialized(csr)
-    csr_str = csr.to_pem
-    deserialized = OpenSSL::X509::Request.new(csr_str)
+  def reconstructed(csr)
+    serialized = csr.to_pem
+    deserialized = OpenSSL::X509::Request.new(serialized)
     Util::OpenSsl::X509::CsrWithSpiffeId.new(deserialized)
   end
-
 
   context 'A CSR created as a ruby object' do
     subject(:csr) do
@@ -41,7 +40,7 @@ RSpec.describe 'Util::OpenSsl::X509::CsrWithSpiffeId' do
 
   context 'A CSR parsed from a string' do
 
-    subject(:csr) { deserialized(csr_with_spiffe_id) }
+    subject(:csr) { reconstructed(csr_with_spiffe_id) }
 
     it 'returns the correct spiffe id' do
       expect(csr.spiffe_id).to eq spiffe_id
@@ -50,7 +49,7 @@ RSpec.describe 'Util::OpenSsl::X509::CsrWithSpiffeId' do
 
   context 'A CSR parsed from a string with no alt name' do
 
-    subject(:csr) { deserialized(csr_without_spiffe_id) }
+    subject(:csr) { reconstructed(csr_without_spiffe_id) }
 
     it 'returns nil' do
       expect(csr.spiffe_id).to be_nil

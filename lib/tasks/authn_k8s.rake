@@ -9,8 +9,9 @@ namespace :authn_k8s do
     service_id = "#{ENV['CONJUR_ACCOUNT']}:webservice:#{service_name}"
 
     resource = Resource[service_id]
-    Authentication::AuthnK8s::ConjurCA.create_ca_for(resource)
-    cert_resource = ::Conjur::CertificateResource.new(resource)
+    Repos::ConjurCA.create(resource)
+    # TODO: should this be under Conjur or is that redundant?
+    cert_resource = Conjur::CertificateResource.new(resource)
 
     puts "Populated CA and Key of service #{service_name}"
     puts "To print values:"
