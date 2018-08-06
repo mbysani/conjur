@@ -5,7 +5,7 @@ RSpec.describe 'Util::OpenSsl::X509::CsrWithSpiffeId' do
 
   let(:spiffe_id) { 'URI:spiffe://cluster.local/example' }
 
-  let(:example_csr) do
+  let(:csr_with_spiffe_id) do
     Util::OpenSsl::X509::QuickCsr.new(
       common_name: 'example.com',
       rsa_key: OpenSSL::PKey::RSA.new(1048),
@@ -13,12 +13,26 @@ RSpec.describe 'Util::OpenSsl::X509::CsrWithSpiffeId' do
     ).request
   end
 
-  def spiffied(csr)
-    Util::OpenSsl::X509::CsrWithSpiffeId.new(csr)
+  let(:csr_without_spiffe_id) do
+    Util::OpenSsl::X509::QuickCsr.new(
+      common_name: 'example.com',
+      rsa_key: OpenSSL::PKey::RSA.new(1048)
+    ).request
   end
 
+  # Serializes and deserializes the CSR, then wraps it in CsrWithSpiffeId
+  #
+  def deserialized(csr)
+    csr_str = csr.to_pem
+    deserialized = OpenSSL::X509::Request.new(csr_str)
+    Util::OpenSsl::X509::CsrWithSpiffeId.new(deserialized)
+  end
+
+
   context 'A CSR created as a ruby object' do
-    subject(:csr) { spiffied(example_csr) }
+    subject(:csr) do
+      Util::OpenSsl::X509::CsrWithSpiffeId.new(csr_with_spiffe_id)
+    end
 
     it 'returns the correct spiffe id' do
       expect(csr.spiffe_id).to eq spiffe_id
@@ -27,14 +41,19 @@ RSpec.describe 'Util::OpenSsl::X509::CsrWithSpiffeId' do
 
   context 'A CSR parsed from a string' do
 
-    subject(:csr) do
-      csr_str = example_csr.to_pem
-      reconstructed = OpenSSL::X509::Request.new(csr_str)
-      spiffied(reconstructed)
-    end
+    subject(:csr) { deserialized(csr_with_spiffe_id) }
 
     it 'returns the correct spiffe id' do
       expect(csr.spiffe_id).to eq spiffe_id
+    end
+  end
+
+  context 'A CSR parsed from a string with no alt name' do
+
+    subject(:csr) { deserialized(csr_without_spiffe_id) }
+
+    it 'returns nil' do
+      expect(csr.spiffe_id).to be_nil
     end
   end
 end

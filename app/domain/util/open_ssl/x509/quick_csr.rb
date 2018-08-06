@@ -18,11 +18,11 @@ module Util
 
         # Creates a basic CSR with with alt_names extensions.
         #
-        # @param common_name [String]
+        # @param common_name [String] eg, 'example.com' 
         # @param rsa_key [OpenSSL::PKey::RSA]
-        # @param alt_names [Array<String>] Often includes the SpiffeId 
+        # @param alt_names [Array<String>] eg, ['URI:spiffe://cluster.local/foo']
         #
-        def initialize(common_name:, rsa_key:, alt_names:)
+        def initialize(common_name:, rsa_key:, alt_names: [])
           @cn = common_name
           @rsa_key = rsa_key
           @alt_names = alt_names
@@ -51,6 +51,7 @@ module Util
         end
 
         def add_alt_name_attrs(csr)
+          return if @alt_names.empty?
           alt_name_attrs.reduce(csr) { |m, x| m.add_attribute(x); m }
         end
 
@@ -85,19 +86,3 @@ module Util
     end
   end
 end
-
-__END__
-
-x = Util::OpenSsl::QuickCsr.new(
-  common_name: 'example.com',
-  rsa_key: OpenSSL::PKey::RSA.new(1048),
-  alt_names: ['URI:spiffe://cluster.local/namespace/foo/pod/bar']
-).request
-
-s = x.to_pem
-x = OpenSSL::X509::Request.new(s)
-
-ext_req_av = x.attributes.find { |a| a.oid == 'extReq' }.value
-ext_req_av = ExtensionRequestAttributeValue.new(ext_req_av)
-ext = ext_req_av.extension('subjectAltName')
-p ext.value

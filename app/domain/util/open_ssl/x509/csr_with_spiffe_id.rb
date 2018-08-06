@@ -17,7 +17,8 @@ module Util
         # Assumes the spiffe_id is the first alt name
         #
         def spiffe_id
-          @spiffe_id ||= ext_req_attr_val.extension('subjectAltName').value
+          @spiffe_id ||= ext_req_attr ?
+            ext_req_attr_val.extension('subjectAltName').value : nil
         end
 
         private
