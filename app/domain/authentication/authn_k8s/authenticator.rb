@@ -5,24 +5,35 @@ module Authentication
     class ClientCertVerificationError < RuntimeError; end
     class ClientCertExpiredError < RuntimeError; end
     class NotFoundError < RuntimeError; end
+    AuthenticatorNotFound = ::Util::ErrorClass.new(
+      "'{0}' wasn't in the available authenticators")
     
     class Authenticator
-      def initialize(env:)
-        @env = env
+
+      #TODO: inject Resource, others
+      #
+      def initialize(
+        conjur_authenticators: ENV['CONJUR_AUTHENTICATORS'],
+        conjur_account: ENV['CONJUR_ACCOUNT']
+      )
+        @conjur_authenticators = conjur_authenticators
+        @conjur_account = conjur_account
       end
 
+      # TODO: pass these in directly instead of params/request
+      #
+      # request.remote_ip
+      # request.body.read (pod_csr)
+      #
       def inject_client_cert(params, request)
         # TODO: replace this hack
         @v4_controller = :login
         
         @params = params
         @request = request
-
         @service_id = params[:service_id]
 
-        # make sure enabled in CONJUR_AUTHENTICATORS
-        # should use the security module
-        verify_enabled
+        validate_authenticator_enabled(@service_id)
         service_lookup # queries for webservice resource, caches, raises err if not found
         host_lookup
         authorize_host
@@ -44,7 +55,6 @@ module Authentication
         @service_id = input.service_id
         @host_id_param = input.username.split('/').last(3).join('/')
         
-        verify_enabled
         service_lookup
         host_lookup
         authorize_host
@@ -60,33 +70,6 @@ module Authentication
 
       private
 
-      ### TODO: The following section contains methods that were overridden in
-      # two different controllers in the v4 implementation. This is a hacky way
-      # of supporting both overrides in one class and should be replaced ASAP.
-      
-      def host_id_param
-        if @v4_controller == :login
-          host_id_param_login
-        elsif @v4_controller == :authenticate
-          host_id_param_authenticate
-        end
-      end
-
-      def host_id_param_login
-        if !@host_id_param
-          cn_entry = get_subject_hash(pod_csr)["CN"]
-          raise CSRVerificationError, 'CSR must contain CN' unless cn_entry
-          
-          @host_id_param = cn_entry.gsub('.', '/')
-        end
-
-        @host_id_param
-      end
-
-      def host_id_param_authenticate
-        @host_id_param
-      end
-
       def spiffe_id
         if @v4_controller == :login
           spiffe_id_login
@@ -96,7 +79,7 @@ module Authentication
       end
 
       def spiffe_id_login
-        @spiffe_id ||= csr_spiffe_id(pod_csr)
+        @spiffe_id ||= Util::OpenSsl::X509::Csr.new(pod_csr).spiffe_id
       end
 
       def spiffe_id_authenticate
@@ -155,118 +138,6 @@ module Authentication
         @pod_csr
       end
 
-      # ssl stuff
-
-      #TODO: extract as object CsrSpiffeId
-      class SpiffeId
-        def initialize(csr)
-          @csr = csr
-        end
-
-        def value
-          return @value if @value
-          return @value = nil unless ext_attributes
-        end
-
-        private
-
-
-        # More about CSR internals:
-        #
-        # https://ruby-doc.org/stdlib-1.9.3/libdoc/openssl/rdoc/OpenSSL/ASN1.html
-        # https://en.wikipedia.org/wiki/Certificate_signing_request
-        # https://stackoverflow.com/questions/39842014/how-is-the-csr-signature-constructed
-        #
-        def ext_attributes
-          @seq ||= @csr.attributes.find { |a| a.oid == 'extReq' }.value
-          # other stuff below rewritten as:
-        end
-
-        def answer
-          URI_from_asn1_seq(
-            ext_attributes.value.find do |v|
-              v.find{ |e| e.value[0].value == 'subjectAltName' }
-            end.value[1].value
-          )
-        end
-
-        def values_for(ext)
-          #seq.value 
-          seq.value.each do |v|
-            v.each do |v|
-              if v.value[0].value == 'subjectAltName'
-                values = v.value[1].value
-                break
-              end
-              break if values
-            end
-          end
-          raise CSRVerificationError, "CSR must contain workload SPIFFE ID subjectAltName" if not values
-          # sequence.value.
-        end
-
-        # values is an array of Asn1Data objects
-        # answer is .first
-        def URI_from_asn1_seq(values) 
-          err = values.any? {|v| v.tag != 6 }
-          raise "Unknown tag in SAN, #{v.tag} -- Available: 2 (URI)\n" if err
-          values.map(&:value)
-        end
-
-          result = []
-          values.each do |v|
-            case v.tag
-            # uniformResourceIdentifier in GeneralName (RFC5280)
-            when 6
-              result << "#{v.value}"
-            else
-              raise StandardError, "Unknown tag in SAN, #{v.tag} -- Available: 2 (URI)\n"
-            end
-          end
-          result
-        end
-
-      end
-
-      def csr_spiffe_id(csr)
-        # https://stackoverflow.com/questions/46494429/how-to-get-an-attribute-from-opensslx509request
-        attributes = csr.attributes
-        raise CSRVerificationError, "CSR must contain workload SPIFFE ID subjectAltName" if not attributes
-
-        seq = nil
-        values = nil
-
-        attributes.each do |a|
-          if a.oid == 'extReq'
-            seq = a.value
-            break
-          end
-        end
-        raise CSRVerificationError, "CSR must contain workload SPIFFE ID subjectAltName" if not seq
-
-        seq.value.each do |v|
-          v.each do |v|
-            if v.value[0].value == 'subjectAltName'
-              values = v.value[1].value
-              break
-            end
-            break if values
-          end
-        end
-        raise CSRVerificationError, "CSR must contain workload SPIFFE ID subjectAltName" if not values
-
-        values = OpenSSL::ASN1.decode(values).value
-
-        uris = begin
-                 URI_from_asn1_seq(values)
-               rescue StandardError => e
-                 raise CSRVerificationError, e.message
-               end
-
-        raise CSRVerificationError, "CSR must contain exactly one URI SAN" unless (uris.count == 1)
-        uris[0]
-      end
-
       #----------------------------------------
       # authn-k8s AuthenticateController helpers
       #----------------------------------------
@@ -289,7 +160,7 @@ module Authentication
           # verify podname SAN matches calling pod ?
 
           # verify host_id matches CN
-          cn_entry = get_subject_hash(@pod_cert)["CN"]
+          cn_entry = Util::OpenSsl::X509::Csr.new(@pod_cert).common_name
 
           if cn_entry.gsub('.', '/') != host_id_param
             raise ClientCertVerificationError, 'Client certificate CN must match host_id'
@@ -306,6 +177,9 @@ module Authentication
 
       # ssl stuff
 
+      # TODO: need this for Cert's as well as for Csr
+      # SmartCert
+      #
       def cert_spiffe_id(cert)
         subject_alt_name = cert.extensions.find {|e| e.oid == "subjectAltName"}
         raise ClientCertVerificationError, "Client Certificate must contain pod SPIFFE ID subjectAltName" if not subject_alt_name
@@ -332,12 +206,14 @@ module Authentication
       # authn-k8s ApplicationController helpers
       #----------------------------------------
       
-      def verify_enabled
-        conjur_authenticators = (@env['CONJUR_AUTHENTICATORS'] || '').split(',').map(&:strip)
-        unless conjur_authenticators.include?("authn-k8s/#{service_id}")
-          raise NotFoundError,
-            "authn-k8s/#{service_id} not whitelisted in CONJUR_AUTHENTICATORS"
-        end
+      #TODO: pull this code out of strategy into a separate object
+      #      then use that object here and in Strategy.
+      #
+      def validate_authenticator_enabled(service_id)
+        authenticators = (@conjur_authenticators || '').split(',').map(&:strip)
+        authenticator_name = "authn-k8s/#{service_id}"
+        valid = authenticators.include?(authenticator_name)
+        raise AuthenticatorNotFound, authenticator_name unless valid
       end
 
       def load_ca
@@ -420,14 +296,6 @@ module Authentication
         end
       end
 
-      def request_ip
-        # In test & development, allow override of the request IP
-        ip = if %w(test development).member?(Rails.env)
-               params[:request_ip]
-             end
-        ip ||= Rack::Request.new(@request.env).ip
-      end
-
       def service_id
         @service_id
       end
@@ -435,7 +303,7 @@ module Authentication
       def service_lookup
         @service ||= Resource[
           #TODO: fix
-          "#{@env['CONJUR_ACCOUNT']}:webservice:conjur/authn-k8s/#{service_id}"
+          "#{@conjur_account}:webservice:conjur/authn-k8s/#{service_id}"
         ]
         raise NotFoundError, "Service #{service_id} not found" if @service.nil?
       end
@@ -455,7 +323,7 @@ module Authentication
       def host_id_prefix
          #TODO: fix, inject account from url
          #TODO: where are the policies for this?
-        "#{@env['CONJUR_ACCOUNT']}:host:conjur/authn-k8s/#{service_id}/apps"
+        "#{conjur_account}:host:conjur/authn-k8s/#{service_id}/apps"
       end
 
       def host_id_tokens
@@ -464,28 +332,29 @@ module Authentication
         end
       end
 
-      protected
-
-      # cert stuff
-
-      #TODO: stop here, create an rspec test to figure this out
-      def get_subject_hash(cert)
-        cert.subject.to_a.each(&:pop).to_h
-      end
-
-      def URI_from_asn1_seq(values)
-        result = []
-        values.each do |v|
-          case v.tag
-          # uniformResourceIdentifier in GeneralName (RFC5280)
-          when 6
-            result << "#{v.value}"
-          else
-            raise StandardError, "Unknown tag in SAN, #{v.tag} -- Available: 2 (URI)\n"
-          end
+      def host_id_param
+        if @v4_controller == :login
+          host_id_param_login
+        elsif @v4_controller == :authenticate
+          host_id_param_authenticate
         end
-        result
       end
+
+      def host_id_param_login
+        if !@host_id_param
+          cn_entry = Util::OpenSsl::X509::Csr.new(pod_cert).common_name
+          raise CSRVerificationError, 'CSR must contain CN' unless cn_entry
+          
+          @host_id_param = cn_entry.gsub('.', '/')
+        end
+
+        @host_id_param
+      end
+
+      def host_id_param_authenticate
+        @host_id_param
+      end
+
     end
   end
 end

@@ -1,36 +1,51 @@
-require 'app/domain/util/open_ssl/x509/csr_with_spiffe_id'
+require 'app/domain/util/open_ssl/x509/csr'
 require 'app/domain/util/open_ssl/x509/quick_csr'
 
-RSpec.describe 'Util::OpenSsl::X509::CsrWithSpiffeId#spiffe_id' do
+RSpec.shared_context "CsrHelpers" do
 
+  let(:common_name) { 'example.com' }
   let(:spiffe_id) { 'URI:spiffe://cluster.local/example' }
 
   let(:csr_with_spiffe_id) do
     Util::OpenSsl::X509::QuickCsr.new(
-      common_name: 'example.com',
-      rsa_key: OpenSSL::PKey::RSA.new(1048),
+      common_name: common_name,
       alt_names: [spiffe_id]
     ).request
   end
 
   let(:csr_without_spiffe_id) do
-    Util::OpenSsl::X509::QuickCsr.new(
-      common_name: 'example.com',
-      rsa_key: OpenSSL::PKey::RSA.new(1048)
-    ).request
+    Util::OpenSsl::X509::QuickCsr.new(common_name: 'example.com').request
   end
 
-  # Serializes and deserializes the CSR, then wraps it in CsrWithSpiffeId
+  # Serializes and deserializes the CSR, then wraps it in Csr This
+  # is needed to accurately simulate the way CSR are actually used, because the
+  # internal objects differ depending on how the CSR is created.
   #
   def reconstructed(csr)
     serialized = csr.to_pem
     deserialized = OpenSSL::X509::Request.new(serialized)
-    Util::OpenSsl::X509::CsrWithSpiffeId.new(deserialized)
+    Util::OpenSsl::X509::Csr.new(deserialized)
   end
+end
+
+RSpec.describe 'Util::OpenSsl::X509::Csr#common_name' do
+  include_context "CsrHelpers"
+
+  subject(:csr) do
+    Util::OpenSsl::X509::Csr.new(csr_with_spiffe_id)
+  end
+
+  it "returns the common name" do
+    expect(csr.common_name).to eq(common_name)
+  end
+end
+
+RSpec.describe 'Util::OpenSsl::X509::Csr#spiffe_id' do
+  include_context "CsrHelpers"
 
   context 'A CSR created as a ruby object' do
     subject(:csr) do
-      Util::OpenSsl::X509::CsrWithSpiffeId.new(csr_with_spiffe_id)
+      Util::OpenSsl::X509::Csr.new(csr_with_spiffe_id)
     end
 
     it 'returns the correct spiffe id' do
@@ -55,4 +70,5 @@ RSpec.describe 'Util::OpenSsl::X509::CsrWithSpiffeId#spiffe_id' do
       expect(csr.spiffe_id).to be_nil
     end
   end
+
 end

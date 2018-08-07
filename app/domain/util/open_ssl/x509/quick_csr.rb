@@ -1,5 +1,4 @@
-# Currently this is useful mainly for tests, and allows you to quickly create
-# CSRs with alt name extensions using a simple declarative interface
+# Currently this is useful mainly for tests, and allows you to quickly create CSRs with alt name extensions using a simple declarative interface
 #
 # TODO: Make this more robust and usable in more contexts, allow clients to set
 # all of the possible basic info.  perhaps fork:
@@ -22,7 +21,11 @@ module Util
         # @param rsa_key [OpenSSL::PKey::RSA]
         # @param alt_names [Array<String>] eg, ['URI:spiffe://cluster.local/foo']
         #
-        def initialize(common_name:, rsa_key:, alt_names: [])
+        def initialize(
+          common_name:,
+          rsa_key: OpenSSL::PKey::RSA.new(1048),
+          alt_names: []
+        )
           @cn = common_name
           @rsa_key = rsa_key
           @alt_names = alt_names
