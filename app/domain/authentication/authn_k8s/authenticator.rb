@@ -403,7 +403,6 @@ module Authentication
           @pod = pod
         else
           raise AuthenticationError, "Resource type #{k8s_controller_name} identity scope is not supported in this version of authn-k8s"
-          # find_pod_under_controller
         end
       end
 
@@ -413,26 +412,6 @@ module Authentication
 
       def permitted_scope?
         ["pod", "service_account", "deployment", "stateful_set", "deployment_config"].include? k8s_controller_name
-      end
-
-      def find_pod_under_controller
-        pod = K8sObjectLookup.pod_by_ip(request_ip, k8s_namespace)
-        unless pod
-          raise AuthenticationError, "No Pod found for request IP #{request_ip.inspect} in namespace #{k8s_namespace.inspect}"
-        end
-        unless pod.metadata.namespace == k8s_namespace
-          raise AuthenticationError, "Namespace of Pod #{pod.metadata.name.inspect} is #{pod.metadata.namespace.inspect}, not #{k8s_namespace.inspect}"
-        end
-
-        controller_object = K8sObjectLookup.find_object_by_name k8s_controller_name, k8s_object_name, k8s_namespace
-        unless controller_object
-          raise AuthenticationError, "Kubernetes #{k8s_controller_name} #{k8s_object_name.inspect} not found in namespace #{k8s_namespace.inspect}"
-        end
-
-        resolver = K8sResolver.for_controller(k8s_controller_name).new(controller_object, pod)
-        resolver.validate_pod
-
-        @pod = pod
       end
 
       def authorize_host
