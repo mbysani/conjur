@@ -2,17 +2,12 @@
 #
 require 'openssl'
 require_relative 'extension_request_attribute_value'
+require_relative 'smart_name'
 
 module Util
   module OpenSsl
     module X509
-      class Csr
-
-        attr_reader :csr
-
-        def initialize(csr)
-          @csr = csr
-        end
+      class SmartCsr < SimpleDelegator
 
         # Assumes the spiffe_id is the first alt name
         #
@@ -22,13 +17,13 @@ module Util
         end
 
         def common_name
-          subject_parts['CN']
+          smart_subject.common_name
         end
 
         private
 
-        def subject_parts
-          @subject_parts ||= @csr.subject.to_a.each(&:pop).to_h
+        def smart_subject
+          @subject ||= SmartName.new(subject)
         end
 
         def ext_req_attr_val
@@ -36,7 +31,7 @@ module Util
         end
 
         def ext_req_attr
-          @csr.attributes.find { |a| a.oid == 'extReq' }
+          attributes.find { |a| a.oid == 'extReq' }
         end
 
       end

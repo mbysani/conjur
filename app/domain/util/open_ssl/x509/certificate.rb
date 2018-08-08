@@ -3,11 +3,15 @@
 # TODO: this could pulled out into a gem
 
 require 'openssl'
+require 'active_support/time'
 
 module Util
   module OpenSsl
     module X509
       module Certificate
+
+        # Create any cert, specify any of the options
+        #
         def self.from_hash(
           subject:,
           issuer:,
@@ -40,7 +44,32 @@ module Util
           cert
         end
 
+        # Create basic cert with defaults quickly
+        #
+        def self.from_subject(subject:, key: nil, issuer: nil, alt_name: nil)
+          key    ||= OpenSSL::PKey::RSA.new(2048)
+          issuer ||= subject
+
+          cert = self.from_hash(
+            subject: subject,
+            issuer: issuer,
+            public_key: key.public_key,
+            good_for: 10.years,
+            extensions: [
+              ['basicConstraints','CA:TRUE', true],
+              ['subjectKeyIdentifier', 'hash'],
+              ['authorityKeyIdentifier', 'keyid:always,issuer:always']
+            ] + alt_name_ext(alt_name)
+          )
+          cert.sign(key, OpenSSL::Digest::SHA256.new)
+          cert
+        end
+
         private
+
+        def self.alt_name_ext(alt_name)
+          alt_name ? [['subjectAltName', alt_name]]: []
+        end
 
         def self.openssl_name(name)
           is_obj = name.is_a?(OpenSSL::X509::Name)

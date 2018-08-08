@@ -24,6 +24,7 @@ module Authentication
       #
       # request.remote_ip
       # request.body.read (pod_csr)
+      # client_cert = request.env['HTTP_X_SSL_CLIENT_CERTIFICATE']
       #
       def inject_client_cert(params, request)
         # TODO: replace this hack
@@ -142,6 +143,9 @@ module Authentication
       # authn-k8s AuthenticateController helpers
       #----------------------------------------
 
+      def validate_cert(cert_str)
+      end
+
       def pod_certificate
         #client_cert = request.env['HTTP_X_SSL_CLIENT_CERTIFICATE']
         raise AuthenticationError, "No client certificate provided" unless @client_cert
@@ -160,7 +164,7 @@ module Authentication
           # verify podname SAN matches calling pod ?
 
           # verify host_id matches CN
-          cn_entry = Util::OpenSsl::X509::Csr.new(@pod_cert).common_name
+          cn_entry = Util::OpenSsl::X509::SmartCsr.new(@pod_cert).common_name
 
           if cn_entry.gsub('.', '/') != host_id_param
             raise ClientCertVerificationError, 'Client certificate CN must match host_id'
@@ -181,25 +185,10 @@ module Authentication
       # SmartCert
       #
       def cert_spiffe_id(cert)
-        subject_alt_name = cert.extensions.find {|e| e.oid == "subjectAltName"}
-        raise ClientCertVerificationError, "Client Certificate must contain pod SPIFFE ID subjectAltName" if not subject_alt_name
-
-        # Parse the subject alternate name certificate extension as ASN1, first value should be the key
-        asn_san = OpenSSL::ASN1.decode(subject_alt_name)
-        raise "Expected ASN1 Subject Alternate Name extension key to be subjectAltName but was #{asn_san.value[0].value}" if asn_san.value[0].value != 'subjectAltName'
-
-        # And the second value should be a nested ASN1 sequence
-        values = OpenSSL::ASN1.decode(asn_san.value[1].value)
-
-        uris =
-          begin
-            URI_from_asn1_seq(values)
-          rescue StandardError => e
-            raise ClientCertVerificationError, e.message
-          end
-
-        raise ClientCertVerificationError, "Client Certificate must contain exactly one URI SAN" unless (uris.count == 1)
-        uris[0]
+        san = Util::OpenSsl::X509::Certificate.new(cert).san
+        err = "Client Certificate must contain pod SPIFFE ID subjectAltName"
+        raise ClientCertVerificationError, err unless san
+        san
       end
       
       #----------------------------------------

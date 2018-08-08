@@ -1,3 +1,4 @@
+__END__
 require 'csr'
 # require 'app/domain/util/open_ssl/x509/request'
 

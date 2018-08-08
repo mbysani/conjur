@@ -5,6 +5,7 @@
 require 'openssl'
 require 'securerandom'
 require 'active_support/time'
+require_relative 'x509/certificate'
 
 module Util
   module OpenSsl
@@ -16,20 +17,10 @@ module Util
       #
       def self.from_subject(subject)
         key = OpenSSL::PKey::RSA.new(2048)
-
-        cert = Util::OpenSsl::X509::Certificate.from_hash(
+        cert = Util::OpenSsl::X509::Certificate.from_subject(
           subject: subject,
-          issuer: subject,
-          public_key: key.public_key,
-          good_for: 10.years,
-          extensions: [
-            ['basicConstraints','CA:TRUE', true],
-            ['subjectKeyIdentifier', 'hash'],
-            ['authorityKeyIdentifier', 'keyid:always,issuer:always']
-          ]
+          key: key
         )
-        cert.sign(key, OpenSSL::Digest::SHA256.new)
-
         self.new(cert, key)
       end
 
@@ -65,7 +56,7 @@ module Util
           ['keyUsage', 'digitalSignature,keyEncipherment', true],
           ['subjectKeyIdentifier', 'hash', false]
         ] +
-        altnames ? [['subjectAltName', altnames.join(','), false]] : []
+        (altnames ? [['subjectAltName', altnames.join(','), false]] : [])
       end
     end
   end
