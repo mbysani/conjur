@@ -9,6 +9,15 @@ module Util
     module X509
       class SmartCsr < SimpleDelegator
 
+        # Support both method of creation so that it will behave like an
+        # `OpenSSL::X509::Certificate`
+        #
+        def initialize(csr)
+          csr = csr.is_a?(String) ?
+            OpenSSL::X509::Request.new(csr) : csr
+          super(csr)
+        end
+
         # Assumes the spiffe_id is the first alt name
         #
         def spiffe_id

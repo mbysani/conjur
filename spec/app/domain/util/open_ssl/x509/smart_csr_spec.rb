@@ -2,6 +2,29 @@ require 'app/domain/util/open_ssl/x509/smart_csr'
 require 'app/domain/util/open_ssl/x509/quick_csr'
 require_relative 'shared_context'
 
+RSpec.describe 'Util::OpenSsl::X509::SmartCsr' do
+  include_context "certificate testing"
+
+  context 'creation from a string' do
+
+    let(:csr_str) { csr_with_spiffe_id.to_der }
+    subject(:csr) { Util::OpenSsl::X509::SmartCsr.new(csr_str) }
+
+    it "creates the correct cert from a string" do
+      expect(csr).to eq(csr_with_spiffe_id)
+    end
+  end
+
+  context 'creation from an existing Request instance' do
+
+    subject(:csr) { Util::OpenSsl::X509::SmartCsr.new(csr_with_spiffe_id) }
+
+    it "creates the correct csr from a csr" do
+      expect(csr).to eq(csr_with_spiffe_id)
+    end
+  end
+end
+
 RSpec.describe 'Util::OpenSsl::X509::SmartCsr#common_name' do
   include_context "certificate testing"
 

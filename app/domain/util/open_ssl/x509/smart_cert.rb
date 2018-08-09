@@ -7,6 +7,15 @@ module Util
     module X509
       class SmartCert < SimpleDelegator
 
+        # Support both method of creation so that it will behave like an
+        # `OpenSSL::X509::Certificate`
+        #
+        def initialize(cert)
+          cert = cert.is_a?(String) ?
+            OpenSSL::X509::Certificate.new(cert) : cert
+          super(cert)
+        end
+
         def san
           san_ext&.value
         end

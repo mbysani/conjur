@@ -1,12 +1,25 @@
+require_relative 'host'
+
 module Authentication
   module AuthnK8s
     class AuthenticationError < RuntimeError; end
-    class CSRVerificationError < RuntimeError; end
     class ClientCertVerificationError < RuntimeError; end
     class ClientCertExpiredError < RuntimeError; end
-    class NotFoundError < RuntimeError; end
     AuthenticatorNotFound = ::Util::ErrorClass.new(
-      "'{0}' wasn't in the available authenticators")
+      "'{0}' wasn't in the available authenticators"
+    )
+    WebserviceNotFound = ::Util::ErrorClass.new(
+      "Webservice '{0}' wasn't found"
+    )
+    HostNotFound = ::Util::ErrorClass.new(
+      "Host '{0}' wasn't found"
+    )
+    HostNotAuthorized = ::Util::ErrorClass.new(
+      "'{0}' does not have 'authenticate' privilege on {1}"
+    )
+    CSRVerificationError = ::Util::ErrorClass.new(
+      'CSR must contain SPIFFE ID SAN'
+    )
     
     class Authenticator
 
@@ -24,29 +37,41 @@ module Authentication
       #
       # request.remote_ip
       # request.body.read (pod_csr)
-      # client_cert = request.env['HTTP_X_SSL_CLIENT_CERTIFICATE']
       #
-      def inject_client_cert(params, request)
-        # TODO: replace this hack
-        @v4_controller = :login
-        
-        @params = params
-        @request = request
-        @service_id = params[:service_id]
+      def inject_client_cert(
+        service_name:,
+        remote_ip:,
+        csr:
+      )
+        validate_authenticator_enabled(service_name)
+        svc_rsc = service_resource(service_name)
 
-        validate_authenticator_enabled(@service_id)
-        service_lookup # queries for webservice resource, caches, raises err if not found
-        host_lookup
-        authorize_host
-        # ^^ all validation and objects, more ore less
-        load_ca
-        find_pod
+        smart_csr = Util::OpenSsl::X509::SmartCsr.new(csr)
+
+        host = Authentication::AuthnK8s::Host.from_csr(
+          account: @conjur_account,
+          service_name: service_name,
+          csr: csr
+        )
+        host_rsc = Host[host.host_id]
+        validate_host_can_access_service(host_rsc, svc_rsc)
+
+        validate_csr(smart_csr)
+
+        pod = Pod.new(smart_csr.spiffe_id)
+        validate_csr_matches_host(host, pod)
+
+        ca = ca_for(host_rsc)
+        find_pod(host, smart_csr.spiffe_id)
         find_container
 
         cert = @ca.signed_cert(pod_csr, subject_altnames: [ "URI:#{spiffe_id}" ])
         install_signed_cert(cert)
       end
       
+      # TODO:
+      # client_cert = request.env['HTTP_X_SSL_CLIENT_CERTIFICATE']
+      #
       def valid?(input)
         # TODO: replace this hack
         @v4_controller = :authenticate
@@ -59,7 +84,7 @@ module Authentication
         service_lookup
         host_lookup
         authorize_host
-        load_ca
+        ca_for
         find_pod
         find_container
         
@@ -70,30 +95,6 @@ module Authentication
       end
 
       private
-
-      def spiffe_id
-        if @v4_controller == :login
-          spiffe_id_login
-        elsif @v4_controller == :authenticate
-          spiffe_id_authenticate          
-        end
-      end
-
-      def spiffe_id_login
-        @spiffe_id ||= Util::OpenSsl::X509::Csr.new(pod_csr).spiffe_id
-      end
-
-      def spiffe_id_authenticate
-        @spiffe_id ||= cert_spiffe_id(pod_certificate)        
-      end
-
-      def pod_name
-        if @v4_controller == :login
-          pod_name_login
-        elsif @v4_controller == :authenticate
-          pod_name_authenticate
-        end
-      end
 
       def pod_name_login
         if !@pod_name
@@ -198,15 +199,22 @@ module Authentication
       #TODO: pull this code out of strategy into a separate object
       #      then use that object here and in Strategy.
       #
-      def validate_authenticator_enabled(service_id)
-        authenticators = (@conjur_authenticators || '').split(',').map(&:strip)
-        authenticator_name = "authn-k8s/#{service_id}"
-        valid = authenticators.include?(authenticator_name)
+      def validate_authenticator_enabled(service_name)
+        authenticator_name = "authn-k8s/#{service_name}"
+        valid = available_authenticators.include?(authenticator_name)
         raise AuthenticatorNotFound, authenticator_name unless valid
       end
 
-      def load_ca
-        @ca = Repos::ConjurCA.ca(@service.identifier)
+      def validate_csr(smart_csr)
+        raise CSRVerificationError unless smart_csr.spiffe_id
+      end
+
+      def available_authenticators
+        (@conjur_authenticators || '').split(',').map(&:strip)
+      end
+
+      def ca_for(rsc)
+        Repos::ConjurCA.ca(rsc)
       end
 
       def find_container
@@ -237,7 +245,8 @@ module Authentication
         host.annotations.find { |a| a.values[:name] == 'kubernetes/authentication-container-name' }[:value] || 'authenticator'
       end
 
-      def find_pod
+      def find_pod(host, spiffe_id)
+
         pod = K8sObjectLookup.pod_by_name(pod_name, k8s_namespace)
         unless pod
           raise AuthenticationError, "No Pod found for podname #{pod_name} in namespace #{k8s_namespace.inspect}"
@@ -279,71 +288,20 @@ module Authentication
         ["pod", "service_account", "deployment", "stateful_set", "deployment_config"].include? k8s_controller_name
       end
 
-      def authorize_host
-        unless host.role.allowed_to?("authenticate", @service)
-          raise AuthenticationError, "#{host.role.id} does not have 'authenticate' privilege on #{@service.id}"
-        end
+      def validate_host_can_access_service(host_rsc, svc_rsc)
+        has_access = host_rsc.role.allowed_to?("authenticate", svc_rsc)
+        raise HostNotAuthorized, host_rsc.role.id, svc_rsc.id unless has_access
       end
 
-      def service_id
-        @service_id
-      end
-
-      def service_lookup
-        @service ||= Resource[
-          #TODO: fix
-          "#{@conjur_account}:webservice:conjur/authn-k8s/#{service_id}"
-        ]
-        raise NotFoundError, "Service #{service_id} not found" if @service.nil?
-      end
-
-      def host_lookup
-        raise NotFoundError, "Host #{host_id} not found" if host.nil?
+      def service_resource(service_name)
+        svc_id = "#{@conjur_account}:webservice:conjur/authn-k8s/#{service_name}"
+        service_resource = Resource[svc_id]
+        raise WebserviceNotFound, svc_id unless service_resource
       end
 
       def host
         @host ||= Resource[host_id]
       end
-
-      def host_id
-        [ host_id_prefix, host_id_param ].compact.join('/')
-      end
-
-      def host_id_prefix
-         #TODO: fix, inject account from url
-         #TODO: where are the policies for this?
-        "#{conjur_account}:host:conjur/authn-k8s/#{service_id}/apps"
-      end
-
-      def host_id_tokens
-        host_id_param.split('/').tap do |tokens|
-          raise "Invalid host id; must end with k8s_namespace/k8s_controller_name/id" unless tokens.length >= 3
-        end
-      end
-
-      def host_id_param
-        if @v4_controller == :login
-          host_id_param_login
-        elsif @v4_controller == :authenticate
-          host_id_param_authenticate
-        end
-      end
-
-      def host_id_param_login
-        if !@host_id_param
-          cn_entry = Util::OpenSsl::X509::Csr.new(pod_cert).common_name
-          raise CSRVerificationError, 'CSR must contain CN' unless cn_entry
-          
-          @host_id_param = cn_entry.gsub('.', '/')
-        end
-
-        @host_id_param
-      end
-
-      def host_id_param_authenticate
-        @host_id_param
-      end
-
     end
   end
 end

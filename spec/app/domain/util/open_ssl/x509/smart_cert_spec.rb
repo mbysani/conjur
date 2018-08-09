@@ -5,10 +5,28 @@ require_relative 'shared_context'
 RSpec.describe 'Util::OpenSsl::X509::SmartCert' do
   include_context "certificate testing"
 
-  subject(:cert) { smart_cert(reconstructed_cert(cert_with_spiffe_id)) }
+  context 'creation from a string' do
+
+    let(:cert_str) { cert_with_spiffe_id.to_pem }
+    subject(:cert) { Util::OpenSsl::X509::SmartCert.new(cert_str) }
+
+    it "creates the correct cert from a string" do
+      expect(cert).to eq(cert_with_spiffe_id)
+    end
+  end
+
+  context 'creation from an existing Certificate instance' do
+
+    subject(:cert) { Util::OpenSsl::X509::SmartCert.new(cert_with_spiffe_id) }
+
+    it "creates the correct cert from a cert" do
+      expect(cert).to eq(cert_with_spiffe_id)
+    end
+  end
 
   context 'a cert with a spiffe id' do
 
+    subject(:cert) { smart_cert(reconstructed_cert(cert_with_spiffe_id)) }
 
     it "returns the SAN" do
       expect(cert.san).to eq(spiffe_id)
