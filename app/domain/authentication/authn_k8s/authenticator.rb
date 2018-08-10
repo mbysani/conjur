@@ -17,8 +17,11 @@ module Authentication
     HostNotAuthorized = ::Util::ErrorClass.new(
       "'{0}' does not have 'authenticate' privilege on {1}"
     )
-    CSRVerificationError = ::Util::ErrorClass.new(
+    CSRIsMissingSpiffeId = ::Util::ErrorClass.new(
       'CSR must contain SPIFFE ID SAN'
+    )
+    CSRNamespaceMismatch = ::Util::ErrorClass.new(
+      'Namespace in SPIFFE ID must match namespace implied by common name'
     )
     
     class Authenticator
@@ -44,29 +47,32 @@ module Authentication
         csr:
       )
         validate_authenticator_enabled(service_name)
-        svc_rsc = service_resource(service_name)
+        webservice = service_resource(service_name)
 
+        kube_host = k8s_host(service_name, csr)
+        conjur_host = Host[kube_host.conjur_host_id]
+        validate_host_can_access_service(conjur_host, webservice)
+
+        # these will becoe private meths on the object i'll create
         smart_csr = Util::OpenSsl::X509::SmartCsr.new(csr)
 
-        host = Authentication::AuthnK8s::Host.from_csr(
-          account: @conjur_account,
-          service_name: service_name,
-          csr: csr
-        )
-        host_rsc = Host[host.host_id]
-        validate_host_can_access_service(host_rsc, svc_rsc)
+        validate_csr(smart_csr, kube_host, spiffe_id)
 
-        validate_csr(smart_csr)
+        create_ca(conjur_host)
 
-        pod = Pod.new(smart_csr.spiffe_id)
-        validate_csr_matches_host(host, pod)
-
-        ca = ca_for(host_rsc)
         find_pod(host, smart_csr.spiffe_id)
         find_container
 
         cert = @ca.signed_cert(pod_csr, subject_altnames: [ "URI:#{spiffe_id}" ])
         install_signed_cert(cert)
+      end
+
+      def k8s_host(service_name, csr)
+        Authentication::AuthnK8s::K8sHost.from_csr(
+          account: @conjur_account,
+          service_name: service_name,
+          csr: csr
+        )
       end
       
       # TODO:
@@ -96,15 +102,30 @@ module Authentication
 
       private
 
-      def pod_name_login
-        if !@pod_name
-          raise CSRVerificationError, 'CSR must contain SPIFFE ID SAN' unless spiffe_id
+      #TODO: pull this code out of strategy into a separate object
+      #      then use that object here and in Strategy.
+      #
+      def validate_authenticator_enabled(service_name)
+        authenticator_name = "authn-k8s/#{service_name}"
+        valid = available_authenticators.include?(authenticator_name)
+        raise AuthenticatorNotFound, authenticator_name unless valid
+      end
 
-          _, _, namespace, _, @pod_name = URI.parse(spiffe_id).path.split("/")
-          raise CSRVerificationError, 'CSR SPIFFE ID SAN namespace must match conjur host id namespace' unless namespace == k8s_namespace
-        end
+      def validate_csr(smart_csr, kube_host, pod)
+        raise CSRIsMissingSpiffeId unless smart_csr.spiffe_id
+        raise CSRNamespaceMismatch unless kube_host.namespace == pod.namespace
+      end
 
-        @pod_name
+      def available_authenticators
+        (@conjur_authenticators || '').split(',').map(&:strip)
+      end
+
+      def create_ca(conjur_host)
+        Repos::ConjurCA.create(conjur_host)
+      end
+
+      def ca_for(rsc)
+        Repos::ConjurCA.ca(rsc)
       end
 
       def pod_name_authenticate
@@ -196,26 +217,6 @@ module Authentication
       # authn-k8s ApplicationController helpers
       #----------------------------------------
       
-      #TODO: pull this code out of strategy into a separate object
-      #      then use that object here and in Strategy.
-      #
-      def validate_authenticator_enabled(service_name)
-        authenticator_name = "authn-k8s/#{service_name}"
-        valid = available_authenticators.include?(authenticator_name)
-        raise AuthenticatorNotFound, authenticator_name unless valid
-      end
-
-      def validate_csr(smart_csr)
-        raise CSRVerificationError unless smart_csr.spiffe_id
-      end
-
-      def available_authenticators
-        (@conjur_authenticators || '').split(',').map(&:strip)
-      end
-
-      def ca_for(rsc)
-        Repos::ConjurCA.ca(rsc)
-      end
 
       def find_container
         container =
@@ -227,18 +228,6 @@ module Authentication
         end
 
         container
-      end
-
-      def k8s_namespace
-        host_id_tokens[-3]
-      end
-
-      def k8s_controller_name
-        host_id_tokens[-2]
-      end
-
-      def k8s_object_name
-        host_id_tokens[-1]
       end
 
       def k8s_container_name
@@ -288,9 +277,9 @@ module Authentication
         ["pod", "service_account", "deployment", "stateful_set", "deployment_config"].include? k8s_controller_name
       end
 
-      def validate_host_can_access_service(host_rsc, svc_rsc)
-        has_access = host_rsc.role.allowed_to?("authenticate", svc_rsc)
-        raise HostNotAuthorized, host_rsc.role.id, svc_rsc.id unless has_access
+      def validate_host_can_access_service(conjur_host, webservice)
+        has_access = conjur_host.role.allowed_to?("authenticate", webservice)
+        raise HostNotAuthorized, conjur_host.role.id, webservice.id unless has_access
       end
 
       def service_resource(service_name)

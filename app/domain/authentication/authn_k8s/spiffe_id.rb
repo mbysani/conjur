@@ -1,6 +1,6 @@
 module Authentication
   module AuthnK8s
-    class Pod
+    class SpiffeId
 
       def initialize(spiffe_id)
         @spiffe_id = spiffe_id

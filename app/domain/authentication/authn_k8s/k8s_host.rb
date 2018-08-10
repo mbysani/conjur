@@ -1,9 +1,16 @@
+# Represents a K8s host, typically created from a CSR or a Cert.
+#
+# This is not to be confused with Conjur model host.  It exists purely to
+# encapsulate logic about how to translate K8s host info into a Conjur host id,
+# and how to break a K8s host into its component parts: namespace, conroller,
+# object
+#
 require 'app/domain/util/open_ssl/x509/smart_cert'
 require 'app/domain/util/open_ssl/x509/smart_csr'
 
 module Authentication
   module AuthnK8s
-    class Host
+    class K8sHost
 
       def self.from_csr(account:, service_name:, csr:)
         cn = Util::OpenSsl::X509::SmartCsr.new(csr).common_name
@@ -26,7 +33,7 @@ module Authentication
         validate!
       end
 
-      def host_id
+      def conjur_host_id
         host_id_prefix + '/' + host_name
       end
 
