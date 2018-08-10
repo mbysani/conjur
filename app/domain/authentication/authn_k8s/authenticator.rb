@@ -2,9 +2,14 @@ require_relative 'host'
 
 module Authentication
   module AuthnK8s
+
+    # TODO: delete or change these into error classes like the others with self
+    #       contained messages.
+    #
     class AuthenticationError < RuntimeError; end
     class ClientCertVerificationError < RuntimeError; end
     class ClientCertExpiredError < RuntimeError; end
+
     AuthenticatorNotFound = ::Util::ErrorClass.new(
       "'{0}' wasn't in the available authenticators"
     )
@@ -33,6 +38,12 @@ module Authentication
     ControllerNotFound = ::Util::ErrorClass.new(
       "Kubernetes {0} {1} not found in namespace {2}"
     )
+    CertInstallationError = ::Util::ErrorClass.new(
+      "Cert could not be copied to pod: {0}"
+    )
+    ContainerNotFound = ::Util::ErrorClass.new(
+      "Container {0} was not found for requesting pod"
+    )
     
     class Authenticator
 
@@ -46,14 +57,105 @@ module Authentication
         @conjur_account = conjur_account
       end
 
+
+      ############################################################# 
+      #
+      # BELOW HERE IS STILL TO BE CLEANED UP
+      #
+      ############################################################# 
+
+      def inject_client_cert(service_name:, csr:)
+
+        validate_authenticator_enabled(service_name)
+
+        InjectClientCert.new(
+          conjur_account: @conjur_account,
+          service_name: service_name,
+          csr: csr
+        ).run
+      end
+
+      
+      # TODO: Sorry John, I was not able to finish this in time.  This needs to be
+      # refactored with an object analogous to InjectClientCert, perhaps ValidateCert.
+      #
+      # Note, however, you will NOT need to write another class as big as that one.
+      #
+      # Instead, first refactor an object out of InjectClientCert called something like
+      # ValidatePodRequest.
+      #
+      # Note that we validate based on the SpiffeId and CommonName.  These can both
+      # be derived from either a CSR or a Cert.  The k8s_host object already has secondary
+      # constructors for both of those.  So it does _almost_ all the work for you.  The
+      # spiffeId for the cert is available as `san` method on SmartCert.
+      #
+      # So those two (SpiffeId and CommonName) will be inputs into
+      # ValidatePodRequest.  The remaining inputs needed can be found by going
+      # through all the validate_XXX methods on InjectClientCert, and noting
+      # any member variable objects they use (or methods that depend on member
+      # variables).
+      #
+      # At a glance, it looks like validate_csr is the only validation method that
+      # isn't shared between the two.  So InjectClientCert.validate, after refactoring,
+      # will likely look something like:
+      #
+      # def validate
+      #   @validate_pod_request.run
+      #   validate_csr
+      # end
+      #
+      def valid?(input)
+
+        # TODO: replace this hack
+        @v4_controller = :authenticate
+
+        # some variables that need to be used in helper methods
+        @client_cert = input.password
+        @service_id = input.service_id
+        @host_id_param = input.username.split('/').last(3).join('/')
+        
+        service_lookup
+        host_lookup
+        authorize_host
+        ca_for
+        find_pod
+        find_container
+        
+        # Run through cert validations
+        pod_certificate
+        
+        true
+      end
+
+      private
+
+      #TODO: pull this code out of strategy into a separate object
+      #      then use that object here and in Strategy.
+      #
+      def validate_authenticator_enabled(service_name)
+        authenticator_name = "authn-k8s/#{service_name}"
+        valid = available_authenticators.include?(authenticator_name)
+        raise AuthenticatorNotFound, authenticator_name unless valid
+      end
+
+      def available_authenticators
+        (@conjur_authenticators || '').split(',').map(&:strip)
+      end
+
+      # NB: Constants (including classes) cannot actually be private in ruby
+      # Nevertheless, we put it here to emphasize that it's job is to help its
+      # containing class.  It will still be accessible directly for unit tests,
+      # however, for example.
+      #
       class InjectClientCert
-        def initialize(conjur_account:, service_name:, remote_ip:, csr:, 
+        def initialize(conjur_account:, service_name:, csr:, 
                        resource_model: Resource, host_model: Host,
                        k8s_facade: K8sObjectLookup,
-                       conjur_ca_repo: Repos::ConjurCA)
+                       k8s_resolver: K8sResolver,
+                       conjur_ca_repo: Repos::ConjurCA,
+                       kubectl_exec: KubectlExec)
           @conjur_account = conjur_account
           @service_name = service_name
-          @remote_ip = remote_ip
           @csr = csr
           @resource_model = resource_model
           @host_model = host_model
@@ -63,7 +165,6 @@ module Authentication
 
         def run
           validate
-          create_ca_for_k8s_host
           install_signed_cert
         end
 
@@ -76,8 +177,17 @@ module Authentication
           validate_host_can_access_service
           validate_csr
           validate_pod
+          validate_container
         end
 
+        # TODO: This is _ok_.  It really looks like there's another small object here,
+        #       though.   Ie, 
+        #
+        #           PodValidation.new(k8s_host, resolver, spiffe_id)
+        #
+        #       As we discussed, that would cleanup up the local vars, and make this 
+        #       really clean.
+        #
         def validate_pod
           raise PodNotFound, spiffe_id.name, spiffe_id.namespace unless pod
 
@@ -96,20 +206,47 @@ module Authentication
             namespace unless controller_object
 
           # TODO: is this needed?  can it be refactored?  Renamed?
-          K8sResolver
+          @k8s_resolver
             .for_controller(controller)
             .new(object, pod)
             .validate_pod
+        end
+
+        def validate_container
+          container =
+            pod.spec.containers.find { |c| c.name == container_name } ||
+            pod.spec.initContainers.find { |c| c.name == container_name }
+
+          raise ContainerNotFound, container_name unless container
+        end
+
+        def install_signed_cert
+          exec = @kubectl_exec.new(pod, container: container_name)
+          resp = exec.copy("/etc/conjur/ssl/client.pem", cert.to_pem, "0644")
+          raise CertInstallationError, resp[:error] if response[:error].present?
+        end
+
+        def ca_for_webservice
+          @conjur_ca_repo.ca(conjur_host)
+        end
+
+        def cert_to_install
+          ca_for_webservice.signed_cert(
+            @csr, 
+            subject_altnames: [ spiffe_id.to_s ]
+          )
+        end
+
+        def container_name
+          name = 'kubernetes/authentication-container-name'
+          annotation = host.annotations.find { |a| a.values[:name] == name }
+          annotation[:value] || 'authenticator'
         end
 
         def controller_object
           h = k8s_host
           # TODO: the order of args here is nonstandard
           @k8s_facade.find_object_by_name(h.controller, h.object, h.namespace)
-        end
-
-        def create_ca_for_k8s_host
-          @conjur_ca_repo.create(conjur_host)
         end
 
         def validate_webservice_exists
@@ -168,179 +305,6 @@ module Authentication
           @pod ||= @k8s_facade.pod_by_name(spiffe_id.name, spiffe_id.namespace)
         end
       end
-
-      ############################################################# 
-      #
-      # BELOW HERE IS STILL TO BE CLEANED UP
-      #
-      ############################################################# 
-
-      def inject_client_cert(
-        service_name:,
-        remote_ip:,
-        csr:
-      )
-        validate_authenticator_enabled(service_name)
-        # this stays here ^^
-
-        find_container
-
-        cert = @ca.signed_cert(pod_csr, subject_altnames: [ "URI:#{spiffe_id}" ])
-
-        install_signed_cert(cert)
-      end
-
-      
-      # TODO:
-      # client_cert = request.env['HTTP_X_SSL_CLIENT_CERTIFICATE']
-      #
-      def valid?(input)
-        # TODO: replace this hack
-        @v4_controller = :authenticate
-
-        # some variables that need to be used in helper methods
-        @client_cert = input.password
-        @service_id = input.service_id
-        @host_id_param = input.username.split('/').last(3).join('/')
-        
-        service_lookup
-        host_lookup
-        authorize_host
-        ca_for
-        find_pod
-        find_container
-        
-        # Run through cert validations
-        pod_certificate
-        
-        true
-      end
-
-      private
-
-      #TODO: pull this code out of strategy into a separate object
-      #      then use that object here and in Strategy.
-      #
-      def validate_authenticator_enabled(service_name)
-        authenticator_name = "authn-k8s/#{service_name}"
-        valid = available_authenticators.include?(authenticator_name)
-        raise AuthenticatorNotFound, authenticator_name unless valid
-      end
-
-      def available_authenticators
-        (@conjur_authenticators || '').split(',').map(&:strip)
-      end
-
-      def ca_for(rsc)
-        Repos::ConjurCA.ca(rsc)
-      end
-
-      def pod_name_authenticate
-        if !@pod_name
-          raise ClientCertVerificationError, 'Client certificate must contain SPIFFE ID SAN' unless spiffe_id
-
-          _, _, namespace, _, @pod_name = URI.parse(spiffe_id).path.split("/")
-          raise ClientCertVerificationError, 'Client certificate SPIFFE ID SAN namespace must match conjur host id namespace' unless namespace == k8s_namespace
-        end
-
-        @pod_name
-      end
-      
-      #----------------------------------------
-      # authn-k8s LoginController helpers
-      #----------------------------------------
-      
-      def install_signed_cert(cert)
-        exec = KubectlExec.new(@pod, container: k8s_container_name)
-        response = exec.copy("/etc/conjur/ssl/client.pem", cert.to_pem, "0644")
-        
-        if response[:error].present?
-          raise AuthenticationError, response[:error].join
-        end
-      end
-
-      def pod_csr
-        if !@pod_csr
-          @pod_csr = OpenSSL::X509::Request.new @request.body.read
-          raise CSRVerificationError, 'CSR can not be verified' unless @pod_csr.verify @pod_csr.public_key
-        end
-
-        @pod_csr
-      end
-
-      #----------------------------------------
-      # authn-k8s AuthenticateController helpers
-      #----------------------------------------
-
-      def validate_cert(cert_str)
-      end
-
-      def pod_certificate
-        #client_cert = request.env['HTTP_X_SSL_CLIENT_CERTIFICATE']
-        raise AuthenticationError, "No client certificate provided" unless @client_cert
-
-        if !@pod_cert
-          begin
-            @pod_cert ||= OpenSSL::X509::Certificate.new(@client_cert)
-          rescue OpenSSL::X509::CertificateError
-          end
-
-          # verify pod cert was signed by ca
-          unless @pod_cert && @ca.verify(@pod_cert)
-            raise ClientCertVerificationError, 'Client certificate cannot be verified by trusted certification authority'
-          end
-
-          # verify podname SAN matches calling pod ?
-
-          # verify host_id matches CN
-          cn_entry = Util::OpenSsl::X509::SmartCsr.new(@pod_cert).common_name
-
-          if cn_entry.gsub('.', '/') != host_id_param
-            raise ClientCertVerificationError, 'Client certificate CN must match host_id'
-          end
-
-          # verify pod cert is still valid
-          if @pod_cert.not_after <= Time.now
-            raise ClientCertExpiredError, 'Client certificate session expired'
-          end
-        end
-
-        @pod_cert
-      end
-
-      # ssl stuff
-
-      # TODO: need this for Cert's as well as for Csr
-      # SmartCert
-      #
-      def cert_spiffe_id(cert)
-        san = Util::OpenSsl::X509::Certificate.new(cert).san
-        err = "Client Certificate must contain pod SPIFFE ID subjectAltName"
-        raise ClientCertVerificationError, err unless san
-        san
-      end
-      
-      #----------------------------------------
-      # authn-k8s ApplicationController helpers
-      #----------------------------------------
-      
-
-      def find_container
-        container =
-          @pod.spec.containers.find { |c| c.name == k8s_container_name } ||
-          @pod.spec.initContainers.find { |c| c.name == k8s_container_name }
-
-        if container.nil?
-          raise AuthenticationError, "Container #{k8s_container_name.inspect} not found in Pod #{@pod.metadata.name.inspect}"
-        end
-
-        container
-      end
-
-      def k8s_container_name
-        host.annotations.find { |a| a.values[:name] == 'kubernetes/authentication-container-name' }[:value] || 'authenticator'
-      end
-
     end
   end
 end

@@ -14,6 +14,10 @@ module Authentication
         parsed.last
       end
 
+      def to_s
+        @spiffe_id
+      end
+
       private
 
       def parsed

@@ -10,6 +10,10 @@ module Repos
     end
 
     # Initialize CA from Conjur variables
+    #
+    # Note: This repo accepts a domain object (a resource model object)
+    #       and returns a domain object.
+    #
     def self.ca(resource)
       cr = ::Conjur::CertificateResource.new(resource)
       stored_cert = Resource["#{cr.cert_id}"].last_secret.value
