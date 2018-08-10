@@ -5,6 +5,7 @@
 # and how to break a K8s host into its component parts: namespace, conroller,
 # object
 #
+require 'forwardable'
 require 'app/domain/util/open_ssl/x509/smart_cert'
 require 'app/domain/util/open_ssl/x509/smart_csr'
 require_relative 'common_name'
@@ -12,6 +13,13 @@ require_relative 'common_name'
 module Authentication
   module AuthnK8s
     class K8sHost
+      extend Forwardable
+
+      def_delegator :@common_name, :namespace, :controller, :object,
+                    :k8s_host_name
+
+      PERMITTED_CONTROLLERS = ["pod", "service_account", "deployment",
+                               "stateful_set", "deployment_config"]
 
       def self.from_csr(account:, service_name:, csr:)
         cn = Util::OpenSsl::X509::SmartCsr.new(csr).common_name
@@ -45,6 +53,14 @@ module Authentication
 
       def host_name
         @common_name.k8s_host_name
+      end
+
+      def namespace_scoped?
+        controller_name == '*' && object_name == '*'
+      end
+
+      def permitted_scope?
+        PERMITTED_CONTROLLERS.include?(controller_name)
       end
 
     end
