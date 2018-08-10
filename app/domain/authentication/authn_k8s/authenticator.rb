@@ -23,6 +23,9 @@ module Authentication
     CSRNamespaceMismatch = ::Util::ErrorClass.new(
       'Namespace in SPIFFE ID must match namespace implied by common name'
     )
+    PodNotFound = ::Util::ErrorClass.new(
+      "No Pod found for podname '{0}' in namespace '{1}'"
+    )
     
     class Authenticator
 
@@ -49,14 +52,17 @@ module Authentication
         validate_authenticator_enabled(service_name)
         webservice = service_resource(service_name)
 
+        # these will becoe private meths on the object i'll create
         kube_host = k8s_host(service_name, csr)
         conjur_host = Host[kube_host.conjur_host_id]
-        validate_host_can_access_service(conjur_host, webservice)
-
-        # these will becoe private meths on the object i'll create
         smart_csr = Util::OpenSsl::X509::SmartCsr.new(csr)
+        spiffe_id = SpiffeId.new(smart_csr.spiffe_id)
+        # this won't happen het because it will be a lazy method
+        pod = K8sObjectLookup.pod_by_name(spiffe_id.name, spiffe_id.namespace)
 
-        validate_csr(smart_csr, kube_host, spiffe_id)
+        validate_host_can_access_service(conjur_host, webservice)
+        validate_csr(smart_csr)
+        # validate ip
 
         create_ca(conjur_host)
 
@@ -64,6 +70,7 @@ module Authentication
         find_container
 
         cert = @ca.signed_cert(pod_csr, subject_altnames: [ "URI:#{spiffe_id}" ])
+
         install_signed_cert(cert)
       end
 
@@ -102,6 +109,17 @@ module Authentication
 
       private
 
+      def validate_host_can_access_service(conjur_host, webservice)
+        has_access = conjur_host.role.allowed_to?("authenticate", webservice)
+        raise HostNotAuthorized, conjur_host.role.id, webservice.id unless has_access
+      end
+
+      def service_resource(service_name)
+        svc_id = "#{@conjur_account}:webservice:conjur/authn-k8s/#{service_name}"
+        service_resource = Resource[svc_id]
+        raise WebserviceNotFound, svc_id unless service_resource
+      end
+
       #TODO: pull this code out of strategy into a separate object
       #      then use that object here and in Strategy.
       #
@@ -111,9 +129,38 @@ module Authentication
         raise AuthenticatorNotFound, authenticator_name unless valid
       end
 
-      def validate_csr(smart_csr, kube_host, pod)
+      def validate_csr(smart_csr)
         raise CSRIsMissingSpiffeId unless smart_csr.spiffe_id
-        raise CSRNamespaceMismatch unless kube_host.namespace == pod.namespace
+        spiffe_id = SpiffeId.new(smart_csr.spiffe_id)
+        common_name = CommonName.new(smart_csr.common_name)
+        raise CSRNamespaceMismatch unless common_name.namespace == spiffe_id.namespace
+      end
+
+      def validate_pod(pod, spiffe_id)
+
+        raise PodNotFound, spiffe_id.name, spiffe_id.namespace unless pod
+
+        if namespace_scoped?
+          @pod = pod
+        elsif permitted_scope?
+          controller_object = K8sObjectLookup.find_object_by_name k8s_controller_name, k8s_object_name, k8s_namespace
+          unless controller_object
+            err = "Kubernetes #{k8s_controller_name} "\
+              "#{k8s_object_name.inspect} not found in namespace "\
+              "#{k8s_namespace.inspect}"
+            raise AuthenticationError, err
+          end
+
+          resolver = K8sResolver
+            .for_controller(k8s_controller_name)
+            .new(controller_object, pod)
+          # May raise K8sResolver#ValidationError
+          resolver.validate_pod
+
+          @pod = pod
+        else
+          raise AuthenticationError, "Resource type #{k8s_controller_name} identity scope is not supported in this version of authn-k8s"
+        end
       end
 
       def available_authenticators
@@ -234,41 +281,6 @@ module Authentication
         host.annotations.find { |a| a.values[:name] == 'kubernetes/authentication-container-name' }[:value] || 'authenticator'
       end
 
-      def find_pod(host, spiffe_id)
-
-        pod = K8sObjectLookup.pod_by_name(pod_name, k8s_namespace)
-        unless pod
-          raise AuthenticationError, "No Pod found for podname #{pod_name} in namespace #{k8s_namespace.inspect}"
-        end
-
-        # TODO: enable in pure k8s
-        # unless pod.status.podIP == request_ip
-        #   raise AuthenticationError, "Pod IP does not match request IP #{request_ip.inspect}"
-        # end
-
-        if namespace_scoped?
-          @pod = pod
-        elsif permitted_scope?
-          controller_object = K8sObjectLookup.find_object_by_name k8s_controller_name, k8s_object_name, k8s_namespace
-          unless controller_object
-            err = "Kubernetes #{k8s_controller_name} "\
-              "#{k8s_object_name.inspect} not found in namespace "\
-              "#{k8s_namespace.inspect}"
-            raise AuthenticationError, err
-          end
-
-          resolver = K8sResolver
-            .for_controller(k8s_controller_name)
-            .new(controller_object, pod)
-          # May raise K8sResolver#ValidationError
-          resolver.validate_pod
-
-          @pod = pod
-        else
-          raise AuthenticationError, "Resource type #{k8s_controller_name} identity scope is not supported in this version of authn-k8s"
-        end
-      end
-
       def namespace_scoped?
         k8s_controller_name == "*" && k8s_object_name == "*"
       end
@@ -277,16 +289,6 @@ module Authentication
         ["pod", "service_account", "deployment", "stateful_set", "deployment_config"].include? k8s_controller_name
       end
 
-      def validate_host_can_access_service(conjur_host, webservice)
-        has_access = conjur_host.role.allowed_to?("authenticate", webservice)
-        raise HostNotAuthorized, conjur_host.role.id, webservice.id unless has_access
-      end
-
-      def service_resource(service_name)
-        svc_id = "#{@conjur_account}:webservice:conjur/authn-k8s/#{service_name}"
-        service_resource = Resource[svc_id]
-        raise WebserviceNotFound, svc_id unless service_resource
-      end
 
       def host
         @host ||= Resource[host_id]

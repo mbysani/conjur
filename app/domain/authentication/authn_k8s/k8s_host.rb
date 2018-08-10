@@ -7,6 +7,7 @@
 #
 require 'app/domain/util/open_ssl/x509/smart_cert'
 require 'app/domain/util/open_ssl/x509/smart_csr'
+require_relative 'common_name'
 
 module Authentication
   module AuthnK8s
@@ -29,44 +30,21 @@ module Authentication
       def initialize(account:, service_name:, common_name:)
         @account      = account
         @service_name = service_name
-        @common_name  = common_name
-        validate!
+        @common_name  = CommonName.new(common_name)
       end
 
       def conjur_host_id
         host_id_prefix + '/' + host_name
       end
 
-      def namespace
-        host_name_parts[-3]
-      end
-
-      def controller
-        host_name_parts[-2]
-      end
-
-      def object
-        host_name_parts[-1]
-      end
-
       private
-
-      def validate!
-        return if host_name_parts.length >= 3
-        raise ArgumentError, "Invalid K8s host CN: #{@common_name}. " +
-              "Must end with namespace.controller.id"
-      end
 
       def host_id_prefix
         "#{@account}:host:conjur/authn-k8s/#{@service_name}/apps"
       end
 
       def host_name
-        host_name_parts.join('/')
-      end
-
-      def host_name_parts
-        @host_name_parts ||= @common_name.split('.')
+        @common_name.k8s_host_name
       end
 
     end
