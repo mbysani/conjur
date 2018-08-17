@@ -23,6 +23,7 @@ function main() {
 
   tag_and_push $INTERNAL_IMAGE $TAG
   tag_and_push $INTERNAL_IMAGE_NEW $TAG
+  tag_and_push $INTERNAL_IMAGE_NEW $BRANCH_NAME
 
   if [ "$BRANCH_NAME" = "master" ]; then
     local latest_tag='latest'
