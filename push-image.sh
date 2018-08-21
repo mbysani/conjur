@@ -37,6 +37,7 @@ function main() {
     tag_and_push $INTERNAL_IMAGE_NEW $stable_tag
 
     git fetch --tags
+    grep -r . .git/refs # temporary to debug
     tag_sha=`git rev-list -n 1 "v$VERSION"`
     head_sha=`git rev-list -n 1 master`
     if [ "$tag_sha" = "$head_sha" ]; then
