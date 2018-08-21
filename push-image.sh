@@ -24,7 +24,7 @@ function main() {
   tag_and_push $INTERNAL_IMAGE $TAG
   tag_and_push $INTERNAL_IMAGE_NEW $TAG
 
-  if [ "$BRANCH_NAME" = "master" ]; then
+  if true; then
     local latest_tag='latest'
     local stable_tag="$(< VERSION)-stable"
 
@@ -60,8 +60,8 @@ function tag_and_push() {
   local image="$1"
   local tag="$2"
 
-  docker tag "$SOURCE_IMAGE" "$image:$tag"
-  docker push "$image:$tag"
+  echo docker tag "$SOURCE_IMAGE" "$image:$tag"
+  echo docker push "$image:$tag"
 }
 
 main
